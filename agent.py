@@ -7,6 +7,10 @@ from typing_extensions import TypedDict
 from typing import Optional, List, Literal
 from agents import Agent, Runner, function_tool
 import re
+from rapidfuzz import fuzz, process  # pip install rapidfuzz
+import phonenumbers  # pip install phonenumbers
+from phonenumbers.phonenumberutil import NumberParseException
+import json
 
 # TODO: For notebook usage, consider installing openai-agents if not present
 # !pip install openai-agents
@@ -42,7 +46,7 @@ def uk_postcode_validator(postcode: str) -> bool:
 # ---------------------------
 
 class PepSanctionResult(TypedDict):
-    status: Literal["pass", "fail"]
+    status: Literal["pass", "fail", "manual_verification"]
     reason: Optional[str]
 
 class IdentityVerificationResult(TypedDict):
@@ -69,18 +73,51 @@ class SendAlertResult(TypedDict):
 # ---------------------------
 
 # Mock data for fraud detection
-FRAUDULENT_NAMES = ["john shady", "anna dodgy", "mr sanction"]
+FRAUDULENT_NAMES = [
+    "john shady",
+    "anna dodgy",
+    "mr sanction",
+    "lisa scammer",
+    "peter fraudwell",
+    "olga blacklist",
+    "ivan launder",
+    "maria suspect",
+    "tony riskman",
+    "sarah shell",
+    "viktor mule",
+    "nina fakeid",
+    "george bribe",
+    "lucy offshor",
+    "mohammed sanction",
+    "jane alias",
+    "david ghost",
+    "emily shadow",
+    "frankie wire",
+    "sophia mule"
+]
 
 @function_tool(strict_mode=False)
 def pep_sanction_check(name: str) -> PepSanctionResult:
     """
-    Checks if a name is on a Political Exposed Person (PEP) or sanctions list.
-    This is a mock implementation.
+    Checks if a name is on a Political Exposed Person (PEP) or sanctions list, with fuzzy matching.
+    Returns 'fail' for exact, 'manual_verification' for close matches, 'pass' otherwise.
     """
-    # TODO: This should be replaced by an MCP call to a compliance service.
     print(f"   - Checking PEP/sanctions for: {name}")
-    if name.lower() in FRAUDULENT_NAMES:
-        return {"status": "fail", "reason": "Name found on a watchlist."}
+    name_lower = name.lower()
+    # Exact match
+    if name_lower in FRAUDULENT_NAMES:
+        return {"status": "fail", "reason": "Name found on a watchlist (exact match)."}
+
+    # Fuzzy match
+    best_match = None
+    score = 0
+    try:
+        best_match, score, _ = process.extractOne(name_lower, FRAUDULENT_NAMES, scorer=fuzz.ratio)
+    except Exception:
+        pass
+    if best_match and score > 80:
+        return {"status": "manual_verification", "reason": f"Name similar to watchlist entry: '{best_match}' (score: {score})"}
+
     return {"status": "pass", "reason": None}
 
 @function_tool(strict_mode=False)
@@ -120,6 +157,21 @@ def source_of_wealth_check(source_description: str) -> SourceOfWealthResult:
     return {"status": "pass", "reason": None}
 
 # ---------------------------
+# Phone Number Validator Tool
+# ---------------------------
+@function_tool(strict_mode=False)
+def phone_number_validator(phone_number: str, region: str = "GB") -> bool:
+    """
+    Validates a phone number using Google's libphonenumber.
+    Returns True if valid, False otherwise.
+    """
+    try:
+        parsed = phonenumbers.parse(phone_number, region)
+        return phonenumbers.is_valid_number(parsed)
+    except NumberParseException:
+        return False
+
+# ---------------------------
 # ApplicationData TypedDict
 # ---------------------------
 
@@ -130,6 +182,7 @@ class ApplicationData(TypedDict):
     document_id: str
     source_of_wealth: str
     postcode: str
+    phone_number: str
 
 # ---------------------------
 # Fraud Agent Tool
@@ -199,7 +252,7 @@ compliance_agent = Agent(
     instructions="""
     You are a compliance officer. Use the provided tools to perform all required compliance checks on the loan application.
     The user will provide the application data as a prompt.
-    You must call all relevant tools based on the application data (pep_sanction_check, identity_verification, assess_affordability, source_of_wealth_check).
+    You must call all relevant tools based on the application data (pep_sanction_check, identity_verification, assess_affordability, source_of_wealth_check, phone_number_validator).
     Consolidate the results from all checks into a single JSON object.
     """,
     model="gpt-4o-mini",
@@ -208,6 +261,7 @@ compliance_agent = Agent(
         identity_verification,
         assess_affordability,
         source_of_wealth_check,
+        phone_number_validator,
     ],
 )
 
@@ -273,12 +327,12 @@ async def run_workflow(application: dict):
 
     # 3. Parallel Compliance and Fraud checks
     print("\nStep 2: Running Compliance and Fraud agents in parallel...")
-    compliance_prompt = f"Please run compliance checks for this application: {state['application_data']}"
-    fraud_prompt = f"Please run a fraud check for this application: {state['application_data']}"
+    compliance_prompt = f"Please run compliance checks for this application: {json.dumps(state['application_data'])}"
+    fraud_prompt = f"Please run a fraud check for this application: {json.dumps(state['application_data'])}"
     
     # Use asyncio.gather to run agents concurrently
     compliance_task = Runner.run(compliance_agent, compliance_prompt)
-    fraud_task = Runner.run(fraud_agent, state["application_data"])
+    fraud_task = Runner.run(fraud_agent, fraud_prompt)
     
     results = await asyncio.gather(compliance_task, fraud_task)
     
@@ -334,7 +388,8 @@ async def main():
         "loan_amount": 15000,
         "document_id": "valid_passport.pdf",
         "source_of_wealth": "employment",
-        "postcode": "SW1A 0AA"
+        "postcode": "SW1A 0AA",
+        "phone_number": "+447911123456"
     }
     final_state_1 = await run_workflow(clean_application)
     print("\n--- FINAL STATE (Scenario 1) ---")
@@ -350,11 +405,29 @@ async def main():
         "loan_amount": 25000,
         "document_id": "valid_id.jpg",
         "source_of_wealth": "inheritance",
-        "postcode": "B4D C0D3" # Invalid postcode
+        "postcode": "B4D C0D3", # Invalid postcode
+        "phone_number": "07911123456"  # Invalid format (missing +44)
     }
     final_state_2 = await run_workflow(fraudulent_application)
     print("\n--- FINAL STATE (Scenario 2) ---")
     print(final_state_2)
+
+    print("\n\n" + "="*50 + "\n")
+
+    # Example 3: A similar name (should trigger manual verification)
+    print("--- Running Scenario 3: Similar Name (Manual Verification) ---")
+    similar_name_application = {
+        "full_name": "Jon Shadey",  # Similar to 'john shady'
+        "income": 60000,
+        "loan_amount": 10000,
+        "document_id": "valid_id.jpg",
+        "source_of_wealth": "salary",
+        "postcode": "EC1A 1BB",
+        "phone_number": "+447911654321"
+    }
+    final_state_3 = await run_workflow(similar_name_application)
+    print("\n--- FINAL STATE (Scenario 3) ---")
+    print(final_state_3)
 
 
 # ---------------------------
