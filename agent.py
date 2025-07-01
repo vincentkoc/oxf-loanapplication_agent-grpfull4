@@ -3,9 +3,11 @@
 # Combines deterministic agents + LLM agents with MCP tool usage
 
 import asyncio
-from typing import TypedDict, Optional, List
-from agents import Agent, Runner, tool
+from typing_extensions import TypedDict
+from typing import Optional, List, Literal
+from agents import Agent, Runner, function_tool
 import re
+import json
 
 # TODO: For notebook usage, consider installing openai-agents if not present
 # !pip install openai-agents
@@ -32,7 +34,7 @@ class AppState(TypedDict):
 FRAUDULENT_NAMES = ["john shady", "anna dodgy", "mr sanction"]
 
 # TODO: In a real scenario, this would be a robust validation library or service.
-@tool
+@function_tool(strict_mode=False)
 def uk_postcode_validator(postcode: str) -> bool:
     """Validates a UK postcode format. This is a mock implementation."""
     # A very basic regex for UK postcodes.
@@ -40,11 +42,38 @@ def uk_postcode_validator(postcode: str) -> bool:
     return bool(pattern.match(postcode.upper()))
 
 # ---------------------------
+# Tool Output TypedDicts
+# ---------------------------
+
+class PepSanctionResult(TypedDict):
+    status: Literal["pass", "fail"]
+    reason: Optional[str]
+
+class IdentityVerificationResult(TypedDict):
+    status: Literal["pass", "fail"]
+    reason: Optional[str]
+
+class AffordabilityResult(TypedDict):
+    status: Literal["pass", "fail"]
+    reason: Optional[str]
+
+class SourceOfWealthResult(TypedDict):
+    status: Literal["pass", "fail"]
+    reason: Optional[str]
+
+class FraudDetectionResult(TypedDict):
+    fraud_score: float
+    flags: List[str]
+
+class SendAlertResult(TypedDict):
+    status: str
+
+# ---------------------------
 # Compliance Agent Tools
 # ---------------------------
 
-@tool
-def pep_sanction_check(name: str) -> dict:
+@function_tool(strict_mode=False)
+def pep_sanction_check(name: str) -> PepSanctionResult:
     """
     Checks if a name is on a Political Exposed Person (PEP) or sanctions list.
     This is a mock implementation.
@@ -53,10 +82,10 @@ def pep_sanction_check(name: str) -> dict:
     print(f"   - Checking PEP/sanctions for: {name}")
     if name.lower() in FRAUDULENT_NAMES:
         return {"status": "fail", "reason": "Name found on a watchlist."}
-    return {"status": "pass"}
+    return {"status": "pass", "reason": None}
 
-@tool
-def identity_verification(document_content: str) -> dict:
+@function_tool(strict_mode=False)
+def identity_verification(document_content: str) -> IdentityVerificationResult:
     """
     Verifies an identity document. This is a mock implementation.
     The content of the document is passed as a string.
@@ -66,10 +95,10 @@ def identity_verification(document_content: str) -> dict:
     print(f"   - Verifying identity document...")
     if "invalid" in document_content:
         return {"status": "fail", "reason": "Document is invalid."}
-    return {"status": "pass"}
+    return {"status": "pass", "reason": None}
 
-@tool
-def assess_affordability(income: int, loan_amount: int) -> dict:
+@function_tool(strict_mode=False)
+def assess_affordability(income: int, loan_amount: int) -> AffordabilityResult:
     """
     Assesses the applicant's loan affordability based on income and loan amount.
     This is a mock implementation.
@@ -78,10 +107,10 @@ def assess_affordability(income: int, loan_amount: int) -> dict:
     print(f"   - Assessing affordability for income {income} and loan {loan_amount}")
     if income < (loan_amount / 2):  # Simple rule
         return {"status": "fail", "reason": "Income too low for this loan amount."}
-    return {"status": "pass"}
+    return {"status": "pass", "reason": None}
 
-@tool
-def source_of_wealth_check(source_description: str) -> dict:
+@function_tool(strict_mode=False)
+def source_of_wealth_check(source_description: str) -> SourceOfWealthResult:
     """
     Verifies the applicant's source of wealth. This is a mock implementation.
     """
@@ -89,14 +118,26 @@ def source_of_wealth_check(source_description: str) -> dict:
     print(f"   - Checking source of wealth: {source_description}")
     if "illegal" in source_description.lower():
         return {"status": "fail", "reason": "Suspicious source of wealth."}
-    return {"status": "pass"}
+    return {"status": "pass", "reason": None}
+
+# ---------------------------
+# ApplicationData TypedDict
+# ---------------------------
+
+class ApplicationData(TypedDict):
+    full_name: str
+    income: int
+    loan_amount: int
+    document_id: str
+    source_of_wealth: str
+    postcode: str
 
 # ---------------------------
 # Fraud Agent Tool
 # ---------------------------
 
-@tool
-def fraud_detection(application: dict) -> dict:
+@function_tool(strict_mode=False)
+def fraud_detection(application: ApplicationData) -> FraudDetectionResult:
     """
     Detects fraud signals in the application data. Mock implementation.
     """
@@ -104,11 +145,11 @@ def fraud_detection(application: dict) -> dict:
     print(f"   - Running fraud detection...")
     flags = []
     score = 0.0
-    name = application.get("full_name", "").lower()
+    name = application["full_name"].lower()
     if name in FRAUDULENT_NAMES:
         flags.append("Name is on a watchlist.")
         score += 0.8
-    if "postcode" in application and not uk_postcode_validator(application["postcode"]):
+    if not uk_postcode_validator(application["postcode"]):
         flags.append("Invalid UK postcode.")
         score += 0.3
 
@@ -118,8 +159,8 @@ def fraud_detection(application: dict) -> dict:
 # Alerting Agent Tool
 # ---------------------------
 
-@tool
-def send_alert(message: str) -> dict:
+@function_tool(strict_mode=False)
+def send_alert(message: str) -> SendAlertResult:
     """Sends an alert. Mock implementation."""
     # TODO: Replace with real MCP call to an alerting service (e.g., email, SMS).
     print(f"   - Sending alert: {message}")
@@ -169,7 +210,6 @@ compliance_agent = Agent(
         assess_affordability,
         source_of_wealth_check,
     ],
-    output_type=dict
 )
 
 fraud_agent = Agent(
@@ -177,7 +217,6 @@ fraud_agent = Agent(
     instructions="You are a fraud detection specialist. Use the fraud_detection tool to assess the application for fraud risk. Return the fraud score and any flags.",
     model="gpt-4o-mini",
     tools=[fraud_detection],
-    output_type=dict
 )
 
 decision_agent = Agent(
@@ -191,7 +230,6 @@ decision_agent = Agent(
     Return a dictionary with 'decision' and 'reason'.
     """,
     model="gpt-4o-mini",
-    output_type=dict
 )
 
 alert_agent = Agent(
@@ -236,8 +274,8 @@ async def run_workflow(application: dict):
 
     # 3. Parallel Compliance and Fraud checks
     print("\nStep 2: Running Compliance and Fraud agents in parallel...")
-    compliance_prompt = f"Please run compliance checks for this application: {state['application_data']}"
-    fraud_prompt = f"Please run a fraud check for this application: {state['application_data']}"
+    compliance_prompt = f"Please run compliance checks for this application: {json.dumps(state['application_data'])}"
+    fraud_prompt = f"Please run a fraud check for this application: {json.dumps(state['application_data'])}"
     
     # Use asyncio.gather to run agents concurrently
     compliance_task = Runner.run(compliance_agent, compliance_prompt)
@@ -260,16 +298,25 @@ async def run_workflow(application: dict):
     try:
         result = await Runner.run(decision_agent, decision_prompt)
         decision_output = result.final_output
-        state["decision_result"] = decision_output.get("decision")
-        state["decision_reason"] = decision_output.get("reason")
+        if isinstance(decision_output, dict):
+            state["decision_result"] = decision_output.get("decision")
+            state["decision_reason"] = decision_output.get("reason")
+        else:
+            raise ValueError("Decision agent did not return a dict")
     except Exception as e:
         print(f"[Decision Agent] LLM failed: {e}. Using fallback logic.")
         # Fallback deterministic rules
         comp = state["compliance_result"]
         fraud = state["fraud_result"]
-        affordability_pass = all(c.get('status') == 'pass' for c in comp.values() if isinstance(c, dict))
-        
-        if affordability_pass and fraud.get("fraud_score", 1.0) < 0.7:
+        if isinstance(comp, dict):
+            affordability_pass = all(c.get('status') == 'pass' for c in comp.values() if isinstance(c, dict))
+        else:
+            affordability_pass = False
+        if isinstance(fraud, dict):
+            fraud_score = fraud.get("fraud_score", 1.0)
+        else:
+            fraud_score = 1.0
+        if affordability_pass and fraud_score < 0.7:
             state["decision_result"] = "approved"
             state["decision_reason"] = "Fallback: Checks passed and fraud risk is below threshold."
         else:
