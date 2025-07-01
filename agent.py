@@ -351,16 +351,34 @@ async def run_workflow(application: dict):
     try:
         result = await Runner.run(decision_agent, decision_prompt)
         decision_output = result.final_output
-        state["decision_result"] = decision_output.get("decision")
-        state["decision_reason"] = decision_output.get("reason")
+        # Try to parse string output as JSON if needed
+        if isinstance(decision_output, str):
+            try:
+                decision_output = json.loads(decision_output)
+            except Exception:
+                pass
+        if isinstance(decision_output, dict):
+            state["decision_result"] = decision_output.get("decision")
+            state["decision_reason"] = decision_output.get("reason")
+        else:
+            raise ValueError("Decision agent output is not a dict.")
     except Exception as e:
         print(f"[Decision Agent] LLM failed: {e}. Using fallback logic.")
         # Fallback deterministic rules
         comp = state["compliance_result"]
         fraud = state["fraud_result"]
-        affordability_pass = all(c.get('status') == 'pass' for c in comp.values() if isinstance(c, dict))
-        
-        if affordability_pass and fraud.get("fraud_score", 1.0) < 0.7:
+        # Ensure comp is a dict before using .values()
+        affordability_pass = False
+        if isinstance(comp, dict):
+            affordability_pass = all(
+                (c.get('status') == 'pass')
+                for c in comp.values() if isinstance(c, dict)
+            )
+        # Ensure fraud is a dict before using .get()
+        fraud_score = 1.0
+        if isinstance(fraud, dict):
+            fraud_score = fraud.get("fraud_score", 1.0)
+        if affordability_pass and fraud_score < 0.7:
             state["decision_result"] = "approved"
             state["decision_reason"] = "Fallback: Checks passed and fraud risk is below threshold."
         else:
