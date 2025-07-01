@@ -1,3 +1,4 @@
-openai-agents
-openai
-opik
+openai-agents==0.1.0
+openai==1.93.0
+opik==1.7.40
+phonenumbers==9.0.8
