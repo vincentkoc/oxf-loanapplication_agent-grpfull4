@@ -7,7 +7,6 @@ from typing_extensions import TypedDict
 from typing import Optional, List, Literal
 from agents import Agent, Runner, function_tool
 import re
-import json
 
 # TODO: For notebook usage, consider installing openai-agents if not present
 # !pip install openai-agents
@@ -274,12 +273,12 @@ async def run_workflow(application: dict):
 
     # 3. Parallel Compliance and Fraud checks
     print("\nStep 2: Running Compliance and Fraud agents in parallel...")
-    compliance_prompt = f"Please run compliance checks for this application: {json.dumps(state['application_data'])}"
-    fraud_prompt = f"Please run a fraud check for this application: {json.dumps(state['application_data'])}"
+    compliance_prompt = f"Please run compliance checks for this application: {state['application_data']}"
+    fraud_prompt = f"Please run a fraud check for this application: {state['application_data']}"
     
     # Use asyncio.gather to run agents concurrently
     compliance_task = Runner.run(compliance_agent, compliance_prompt)
-    fraud_task = Runner.run(fraud_agent, fraud_prompt)
+    fraud_task = Runner.run(fraud_agent, state["application_data"])
     
     results = await asyncio.gather(compliance_task, fraud_task)
     
@@ -298,25 +297,16 @@ async def run_workflow(application: dict):
     try:
         result = await Runner.run(decision_agent, decision_prompt)
         decision_output = result.final_output
-        if isinstance(decision_output, dict):
-            state["decision_result"] = decision_output.get("decision")
-            state["decision_reason"] = decision_output.get("reason")
-        else:
-            raise ValueError("Decision agent did not return a dict")
+        state["decision_result"] = decision_output.get("decision")
+        state["decision_reason"] = decision_output.get("reason")
     except Exception as e:
         print(f"[Decision Agent] LLM failed: {e}. Using fallback logic.")
         # Fallback deterministic rules
         comp = state["compliance_result"]
         fraud = state["fraud_result"]
-        if isinstance(comp, dict):
-            affordability_pass = all(c.get('status') == 'pass' for c in comp.values() if isinstance(c, dict))
-        else:
-            affordability_pass = False
-        if isinstance(fraud, dict):
-            fraud_score = fraud.get("fraud_score", 1.0)
-        else:
-            fraud_score = 1.0
-        if affordability_pass and fraud_score < 0.7:
+        affordability_pass = all(c.get('status') == 'pass' for c in comp.values() if isinstance(c, dict))
+        
+        if affordability_pass and fraud.get("fraud_score", 1.0) < 0.7:
             state["decision_result"] = "approved"
             state["decision_reason"] = "Fallback: Checks passed and fraud risk is below threshold."
         else:
