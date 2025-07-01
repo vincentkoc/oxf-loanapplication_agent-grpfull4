@@ -29,9 +29,6 @@ class AppState(TypedDict):
 # Mock Data and Tools
 # ---------------------------
 
-# Mock data for fraud detection
-FRAUDULENT_NAMES = ["john shady", "anna dodgy", "mr sanction"]
-
 # TODO: In a real scenario, this would be a robust validation library or service.
 @function_tool(strict_mode=False)
 def uk_postcode_validator(postcode: str) -> bool:
@@ -70,6 +67,9 @@ class SendAlertResult(TypedDict):
 # ---------------------------
 # Compliance Agent Tools
 # ---------------------------
+
+# Mock data for fraud detection
+FRAUDULENT_NAMES = ["john shady", "anna dodgy", "mr sanction"]
 
 @function_tool(strict_mode=False)
 def pep_sanction_check(name: str) -> PepSanctionResult:
