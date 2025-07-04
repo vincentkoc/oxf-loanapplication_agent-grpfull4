@@ -137,12 +137,35 @@ def identity_verification(document_content: str) -> IdentityVerificationResult:
 def assess_affordability(income: int, loan_amount: int) -> AffordabilityResult:
     """
     Assesses the applicant's loan affordability based on income and loan amount.
-    This is a mock implementation.
+    This is a mock implementation with a slightly more sophisticated check.
     """
     # TODO: This should be replaced by an MCP call to an affordability service.
     print(f"   - Assessing affordability for income {income} and loan {loan_amount}")
-    if income < (loan_amount / 2):  # Simple rule
-        return {"status": "fail", "reason": "Income too low for this loan amount."}
+
+    # Basic DTI (Debt-to-Income) ratio check
+    if income <= 0 or loan_amount <= 0:
+        return {"status": "fail", "reason": "Income and loan amount must be positive numbers."}
+
+    dti = loan_amount / income  # Debt-to-Income ratio
+
+    # Fail if DTI is above 0.4 (i.e., loan is more than 40% of annual income)
+    if dti > 0.4:
+        return {
+            "status": "fail",
+            "reason": f"Loan amount is too high relative to income (DTI: {dti:.2f})."
+        }
+    # Warn if DTI is between 0.3 and 0.4 (manual verification)
+    if 0.3 < dti <= 0.4:
+        return {
+            "status": "manual_verification",
+            "reason": f"Loan amount is moderately high relative to income (DTI: {dti:.2f})."
+        }
+    # Also fail if income is below a minimum threshold (e.g., £10,000)
+    if income < 10000:
+        return {
+            "status": "fail",
+            "reason": "Income below minimum threshold for loan consideration."
+        }
     return {"status": "pass", "reason": None}
 
 @function_tool(strict_mode=False)
@@ -267,7 +290,12 @@ compliance_agent = Agent(
 
 fraud_agent = Agent(
     name="FraudAgent",
-    instructions="You are a fraud detection specialist. Use the fraud_detection tool to assess the application for fraud risk. Return the fraud score and any flags.",
+    instructions="""
+    You are a fraud detection specialist. Use the fraud_detection tool to assess the application for fraud risk.
+    Always return a dictionary with keys 'fraud_score' (float) and 'flags' (list of strings).
+    If you encounter an error, set 'fraud_score' to 1.0 and add a relevant message to 'flags'.
+    Never include markdown, code blocks, or embedded JSON in the 'flags' list. Only return plain English strings.
+    """,
     model="gpt-4o-mini",
     tools=[fraud_detection],
 )
