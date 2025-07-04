@@ -287,7 +287,12 @@ decision_agent = Agent(
 
 alert_agent = Agent(
     name="AlertAgent",
-    instructions="You are an alerting agent. A user will provide a message to send. Use the send_alert tool to deliver this message.",
+    instructions="""
+    You are an alerting agent for a loan application service. 
+    When provided with a message, use the send_alert tool to deliver it to the user.
+    Ensure the message is communicated in a friendly, professional, and supportive tone, 
+    helping the user understand any issues or next steps regarding their loan application.
+    """,
     model="gpt-4o-mini",
     tools=[send_alert],
 )
@@ -446,6 +451,23 @@ async def main():
     final_state_3 = await run_workflow(similar_name_application)
     print("\n--- FINAL STATE (Scenario 3) ---")
     print(final_state_3)
+
+    print("\n\n" + "="*50 + "\n")
+
+    # Example 4: Incomplete application (should trigger an alert)
+    print("--- Running Scenario 4: Incomplete Application (Missing Fields) ---")
+    incomplete_application = {
+        "full_name": "Bob Missingfields",
+        # "income" is missing
+        "loan_amount": 5000,
+        # "document_id" is missing
+        "source_of_wealth": "savings",
+        "postcode": "W1A 1AA",
+        "phone_number": "+447911000000"
+    }
+    final_state_4 = await run_workflow(incomplete_application)
+    print("\n--- FINAL STATE (Scenario 4) ---")
+    print(final_state_4)
 
 
 # ---------------------------
