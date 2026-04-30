@@ -1,4 +1,4 @@
 openai-agents==0.1.0
 openai==1.93.0
-opik==1.7.40
 phonenumbers==9.0.8
+rapidfuzz>=3.0.0,<4.0.0
